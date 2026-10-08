@@ -23,7 +23,8 @@ yarn next:build
 
 yarn hardhat:chain                             # local node (forks Hedera testnet), port 8545
 yarn hardhat:deploy --network localhost        # deploys MockPyth + UsdCheckout locally
-yarn hardhat:deploy --network hederaTestnet    # real deploy, asks for the key password
+yarn hardhat:deploy --network hederaTestnet    # real deploy against Pyth, asks for the key password
+DEMO_ORACLE=true yarn hardhat:deploy --network hederaTestnet   # demo oracle: MockPyth, no Pyth API key needed (PowerShell: $env:DEMO_ORACLE="true")
 yarn hardhat:account:generate                  # encrypted deployer key into packages/hardhat/.env
 yarn hardhat:verify -- UsdCheckout testnet     # Sourcify verification
 yarn next:dev                                  # http://localhost:3000
@@ -37,11 +38,14 @@ Run `yarn hardhat:test`, `yarn lint` and both type checks before finishing a cha
 | --- | --- |
 | `packages/hardhat/contracts/UsdCheckout.sol` | The only production contract. |
 | `packages/hardhat/contracts/mocks/` | Test-only: `HostileMerchant`, and an import that makes Hardhat compile Pyth's `MockPyth`. Do not deploy these to a live network. |
-| `packages/hardhat/deploy/00_deploy_usd_checkout.ts` | Deploys `MockPyth` + `UsdCheckout` locally, or `UsdCheckout` against the real Pyth contract on Hedera. |
-| `packages/hardhat/test/` | `UsdCheckout.test.ts` (contract) and `frontendAmounts.test.ts` (imports the page's helpers from `packages/nextjs/utils/checkout.ts`). |
+| `packages/hardhat/deploy/00_deploy_usd_checkout.ts` | Deploys `MockPyth` + `UsdCheckout` locally or with `DEMO_ORACLE=true`, otherwise `UsdCheckout` against the real Pyth contract on Hedera. |
+| `packages/hardhat/test/` | `UsdCheckout.test.ts` (contract), `frontendAmounts.test.ts` (the page's helpers from `packages/nextjs/utils/checkout.ts`), `hermesRequest.test.ts` (request helpers from `packages/nextjs/utils/hermes.ts`) and `demoOracle.test.ts` (demo price parsing and the mock update payload, checked against `MockPyth`). |
 | `packages/nextjs/app/checkout/page.tsx` | The merchant and payer UI. |
 | `packages/nextjs/utils/checkout.ts` | Dollar parsing, tinybar and wei scaling, slippage, HashScan links. |
-| `packages/nextjs/utils/pyth.ts` | Fetches signed price updates from Pyth Hermes. |
+| `packages/nextjs/utils/pyth.ts` | Browser side: asks `/api/hermes` for a signed Pyth price update. |
+| `packages/nextjs/app/api/hermes/route.ts` | Server side: calls Pyth Hermes with the API key (`HERMES_API_KEY`, server only). |
+| `packages/nextjs/utils/demoOracle.ts` | Demo oracle mode: detects a mock `PYTH` address, parses a typed-in price and builds the `MockPyth` update payload. No Next.js imports. |
+| `packages/nextjs/utils/hermes.ts` | Request helpers for that route (URL, headers, error text); no Next.js imports so the tests can load it. |
 | `packages/nextjs/contracts/deployedContracts.ts` | **Generated** by `yarn hardhat:deploy`. Do not edit by hand. |
 
 ## Rules that are easy to break
@@ -63,18 +67,26 @@ Inside a Hedera contract, `msg.value` and balances are in **tinybars** (8 decima
 Do not copy a contract address or Pyth feed id from memory, search snippets, or another repo. Check them against:
 
 - Pyth contract addresses: https://docs.pyth.network/price-feeds/core/contract-addresses/evm
-- Pyth feed ids: https://hermes.pyth.network/v2/price_feeds?query=hbar&asset_type=crypto
+- Pyth feed ids: https://pyth.dourolabs.app/hermes/v2/price_feeds?query=hbar&asset_type=crypto
 - Hedera contract existence: `https://testnet.mirrornode.hedera.com/api/v1/contracts/<0.0.x or 0x address>`
 
 Current values: Pyth on Hedera `0xA2aa501b19aff244D90cc15a4Cf739D2725B5729` (testnet and mainnet, contract id `0.0.3042133` on testnet); HBAR/USD feed `0x3728e591097635310e6341af53db8b7ee42da9b3a8d918f9463ce9cca886dfbd`.
 
 ### 4. Secrets
 
-Never commit `.env`, `.env.local`, private keys, or the encrypted key blob. The only deployer key flow is `yarn hardhat:account:generate` / `import`, which writes `DEPLOYER_PRIVATE_KEY_ENCRYPTED` to `packages/hardhat/.env` (git-ignored). Do not ask the user to paste a private key into a chat.
+Never commit `.env`, `.env.local`, private keys, API keys, or the encrypted key blob. `HERMES_API_KEY` lives only in `packages/nextjs/.env.local` and must never get a `NEXT_PUBLIC_` prefix, because that would ship it to the browser. The only deployer key flow is `yarn hardhat:account:generate` / `import`, which writes `DEPLOYER_PRIVATE_KEY_ENCRYPTED` to `packages/hardhat/.env` (git-ignored). Do not ask the user to paste a private key into a chat.
 
 ### 5. Template compatibility
 
 `template.json` is validated by `create-scaffold-hbar` when someone scaffolds from this repo, and it is deleted from the scaffolded project. Keep it valid: `name` is required; `capabilities` and `defaults` here allow Next.js + Hardhat only. If you add a package manager or framework option, update the manifest and the tests.
+
+### 6. Demo oracle mode is a deployment choice, never a code path
+
+`DEMO_ORACLE=true` deploys the same `UsdCheckout` against Pyth's `MockPyth`, so the flow works without a Pyth API key. The page detects it by comparing the contract's `PYTH` address with the real Pyth address (`utils/demoOracle.ts`) and shows a warning banner. Keep it that way:
+
+- Do not add a stored, hard-coded or admin-set price to `UsdCheckout.sol`; rule 2 still holds.
+- `MockPyth` accepts any price, so the deploy script must keep refusing `DEMO_ORACLE=true` on `hederaMainnet`.
+- Anything the page or README says about demo mode must say that the price is typed in by the payer and is not Pyth data.
 
 ## Hooks and UI conventions
 

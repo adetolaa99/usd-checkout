@@ -18,8 +18,16 @@
     },
     "envVars": [
       {
-        "key": "NEXT_PUBLIC_HERMES_URL",
-        "description": "Optional (packages/nextjs/.env.local). Pyth Hermes instance that serves signed price updates. Defaults to https://hermes.pyth.network."
+        "key": "HERMES_API_KEY",
+        "description": "Needed for live Pyth quotes only, not for demo oracle mode (packages/nextjs/.env.local). Pyth Hermes API key, sent by the server route /api/hermes as a Bearer token. The key must be allowed to read the HBAR/USD feed. Server only: never prefix it with NEXT_PUBLIC_. Get one in Pyth Terminal (https://app.pyth.com); see https://docs.pyth.network/price-feeds/core/upgrade/preparing."
+      },
+      {
+        "key": "HERMES_URL",
+        "description": "Optional (packages/nextjs/.env.local). Pyth Hermes instance that serves signed price updates. Defaults to https://pyth.dourolabs.app/hermes."
+      },
+      {
+        "key": "DEMO_ORACLE",
+        "description": "Optional (set in your shell when deploying). Set to true to deploy against Pyth's MockPyth instead of the real Pyth contract, so the whole payment flow works without a Pyth API key. Prices are typed in by the payer. Testnet and local chains only: the deploy script refuses it on mainnet."
       },
       {
         "key": "NEXT_PUBLIC_HEDERA_TESTNET_RPC_URL",
@@ -54,6 +62,9 @@
             {
               "label": "Deploy to Hedera testnet",
               "command": "{run:hardhat:deploy} --network hederaTestnet"
+            },
+            {
+              "text": "No Pyth API key that covers HBAR/USD? Set DEMO_ORACLE=true in your shell before the deploy command to use the demo oracle (see 'Oracle modes' in the README)."
             },
             {
               "label": "Start the app, open /checkout, create and pay an invoice",

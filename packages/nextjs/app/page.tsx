@@ -86,7 +86,7 @@ const Home: NextPage = () => {
               </div>
               <h3 className="font-bold text-lg mb-2">USD Checkout</h3>
               <p className="text-base-content/70 text-sm m-0 mb-6">
-                Create dollar-priced invoices and pay them in HBAR at a live Pyth price.
+                Create dollar-priced invoices and pay them in HBAR, converted with a Pyth price.
               </p>
               <Link href="/checkout" passHref className="btn btn-primary btn-sm">
                 Open Checkout

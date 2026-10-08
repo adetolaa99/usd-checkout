@@ -14,6 +14,7 @@ import {
   nativeToRpcValue,
   parseUsdToCents,
 } from "~~/utils/checkout";
+import { buildDemoQuote, isDemoOracle, parseDemoPrice } from "~~/utils/demoOracle";
 import { type HermesQuote, fetchHermesQuote } from "~~/utils/pyth";
 import { notification } from "~~/utils/scaffold-hbar";
 
@@ -59,11 +60,12 @@ const CheckoutPage: NextPage = () => {
 
   const { data: invoiceCount } = useScaffoldReadContract({ contractName: "UsdCheckout", functionName: "invoiceCount" });
   const { data: priceId } = useScaffoldReadContract({ contractName: "UsdCheckout", functionName: "PRICE_ID" });
+  const { data: pythAddress } = useScaffoldReadContract({ contractName: "UsdCheckout", functionName: "PYTH" });
   const { data: nativeDecimals } = useScaffoldReadContract({
     contractName: "UsdCheckout",
     functionName: "NATIVE_DECIMALS",
   });
-  const { data: invoice } = useScaffoldReadContract({
+  const { data: invoice, refetch: refetchInvoice } = useScaffoldReadContract({
     contractName: "UsdCheckout",
     functionName: "invoices",
     args: [invoiceId],
@@ -84,11 +86,24 @@ const CheckoutPage: NextPage = () => {
     args: [quote?.updateData],
   });
 
+  // Demo oracle mode: the contract reads its price from a mock Pyth contract (see utils/demoOracle.ts).
+  const demoMode = pythAddress !== undefined && isDemoOracle(pythAddress);
+  const [demoPriceInput, setDemoPriceInput] = useState("0.10");
+
   const decimals = nativeDecimals ?? 8;
   const feeIsReasonable = fee === undefined || isFeeReasonable(fee, decimals);
 
   const handleQuote = async () => {
     if (!priceId) return;
+    if (demoMode) {
+      const demoPrice = parseDemoPrice(demoPriceInput);
+      if (demoPrice === null) {
+        notification.error("Enter a demo price in USD per HBAR, such as 0.10");
+        return;
+      }
+      setQuote(buildDemoQuote(priceId, demoPrice, Math.floor(Date.now() / 1000)));
+      return;
+    }
     setIsQuoting(true);
     try {
       setQuote(await fetchHermesQuote(priceId));
@@ -107,7 +122,10 @@ const CheckoutPage: NextPage = () => {
       args: [invoiceId, quote.updateData],
       value,
     });
-    if (hash) setTxHash(hash);
+    if (hash) {
+      setTxHash(hash);
+      await refetchInvoice();
+    }
   };
 
   const quoteAgeSeconds = quote ? Math.max(0, Math.floor(Date.now() / 1000) - quote.publishTime) : undefined;
@@ -118,16 +136,26 @@ const CheckoutPage: NextPage = () => {
       <div className="text-center max-w-2xl">
         <h1 className="text-3xl font-bold m-0">USD checkout on Hedera</h1>
         <p className="text-base-content/70 mt-2">
-          Price in dollars, get paid in HBAR. The conversion uses a live Pyth price that the payer submits with the
-          payment.
+          Price in dollars, get paid in HBAR. The conversion uses a price that the payer submits with the payment: a
+          live Pyth price, or a typed-in demo price in demo oracle mode.
         </p>
       </div>
 
-      {!isHedera && (
+      {demoMode && (
         <div role="alert" className="alert alert-warning max-w-2xl">
           <span>
-            You are on {targetNetwork.name}, where the contract uses Pyth&apos;s mock. Switch the target network to
-            Hedera testnet to pay with live Pyth prices.
+            <strong>Demo oracle mode.</strong> This contract reads its HBAR price from a mock Pyth contract, so the
+            price is whatever you type below, not live Pyth data. Use it on testnet only. For live Pyth prices, deploy
+            without <code>DEMO_ORACLE</code> (see the README).
+          </span>
+        </div>
+      )}
+
+      {!demoMode && !isHedera && (
+        <div role="alert" className="alert alert-warning max-w-2xl">
+          <span>
+            You are on {targetNetwork.name}. Live Pyth prices are available on Hedera only, so switch the target network
+            to Hedera testnet.
           </span>
         </div>
       )}
@@ -211,26 +239,43 @@ const CheckoutPage: NextPage = () => {
             </div>
           )}
 
+          {demoMode && (
+            <label className="form-control">
+              <span className="label-text">Demo price (USD per HBAR)</span>
+              <input
+                className="input input-bordered w-full"
+                value={demoPriceInput}
+                onChange={event => {
+                  setDemoPriceInput(event.target.value);
+                  setQuote(undefined);
+                }}
+                inputMode="decimal"
+                placeholder="0.10"
+              />
+            </label>
+          )}
+
           <button
             className="btn btn-secondary"
             onClick={handleQuote}
-            disabled={!isHedera || !isOpen || !priceId || isQuoting}
+            disabled={pythAddress === undefined || (!demoMode && !isHedera) || !isOpen || !priceId || isQuoting}
           >
-            {isQuoting ? "Fetching price…" : "Get live HBAR quote"}
+            {isQuoting ? "Fetching price…" : demoMode ? "Use demo price" : "Get live HBAR quote"}
           </button>
 
           {quote && required !== undefined && fee !== undefined && (
             <div className="text-sm bg-base-200 rounded-lg p-3 flex flex-col gap-1">
               <div>
-                Pyth price: <strong>${(Number(quote.price) * 10 ** quote.expo).toFixed(5)}</strong> per HBAR (
-                {quoteAgeSeconds}s old)
+                {demoMode ? "Demo price (typed by you, not from Pyth)" : "Pyth price"}:{" "}
+                <strong>${(Number(quote.price) * 10 ** quote.expo).toFixed(5)}</strong> per HBAR
+                {demoMode ? "" : ` (${quoteAgeSeconds}s old)`}
               </div>
               <div>
                 You pay: <strong>{formatUnits(required, decimals)} HBAR</strong>
               </div>
               <div>
-                Pyth update fee: {formatUnits(fee, decimals)} HBAR. A 1% buffer is added to the amount sent; whatever is
-                not needed is refunded in the same transaction.
+                {demoMode ? "Mock oracle" : "Pyth"} update fee: {formatUnits(fee, decimals)} HBAR. A 1% buffer is added
+                to the amount sent; whatever is not needed is refunded in the same transaction.
               </div>
               {!feeIsReasonable && (
                 <div role="alert" className="text-error font-semibold">
